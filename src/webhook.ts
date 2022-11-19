@@ -112,8 +112,10 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
     }
 
     async send(webhook: Webhook, status: Status) {
-        debugDiscord('Waiting 10s before posting status %d to Discord webhook %d', status.id, webhook.id);
-        await new Promise(rs => setTimeout(rs, 10000));
+        if (status.media_attachments.find(a => a.type === 'image')) {
+            debugDiscord('Waiting 10s before posting status %d to Discord webhook %d', status.id, webhook.id);
+            await new Promise(rs => setTimeout(rs, 10000));
+        }
 
         return super.send(webhook, status);
     }
