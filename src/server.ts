@@ -38,10 +38,17 @@ export async function main() {
         last_status_id: string | null;
     }>(path.join(data_path, 'state.json'));
 
-    process.on('exit', () => {
-        fs_sync.writeFileSync(path.join(data_path, 'state.json'), JSON.stringify({
+    const updateSavedState = (sync = false) => {
+        const data = JSON.stringify({
             last_status_id: stream?.last_status_id ?? state?.last_status_id,
-        }, null, 4) + '\n');
+        }, null, 4) + '\n';
+
+        if (sync) fs_sync.writeFileSync(path.join(data_path, 'state.json'), data, 'utf-8');
+        else return fs.writeFile(path.join(data_path, 'state.json'), data, 'utf-8');
+    };
+
+    process.on('exit', () => {
+        updateSavedState(true);
     });
 
     if (state?.last_status_id) {
@@ -81,6 +88,9 @@ export async function main() {
         stream.events.close();
         discord?.client.destroy();
     });
+
+    // Update saved state every minute
+    setInterval(() => updateSavedState(), 60000).unref();
 }
 
 async function tryReadJson<T>(file: string): Promise<T | null> {
