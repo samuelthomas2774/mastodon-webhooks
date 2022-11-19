@@ -9,9 +9,7 @@ export default class MastodonApi {
         readonly server_url: string,
         private token: string,
         readonly account_host: string,
-    ) {
-        //
-    }
+    ) {}
 
     async fetch(url: URL | string, method = 'GET', body?: string | object) {
         const headers = new Headers({
@@ -39,16 +37,32 @@ export default class MastodonApi {
         return response.json();
     }
 
-    createEventStream(
-        webhooks: WebhookManager,
-        last_event_id?: string,
-    ) {
-        return new MastodonStream(this, webhooks, this.server_url, this.token, this.account_host);
+    async *getTimelineStatusesSince(last_status_id: string, timeline = 'home') {
+        let statuses: Status[];
+
+        do {
+            statuses = await this.fetch('/api/v1/timelines/' + timeline + '?' + new URLSearchParams({
+                since_id: last_status_id,
+            }).toString());
+
+            statuses.sort((a, b) => Number(BigInt(a.id) - BigInt(b.id)));
+
+            for (const status of statuses) {
+                yield status;
+                last_status_id = status.id;
+            }
+        } while (statuses.length);
+    }
+
+    createEventStream(webhooks: WebhookManager, type = 'user') {
+        return new MastodonStream(this, webhooks, this.server_url, this.token, this.account_host, type);
     }
 }
 
 export class MastodonStream {
     events: EventSource;
+
+    last_status_id: string | null = null;
 
     constructor(
         readonly api: MastodonApi,
@@ -56,9 +70,9 @@ export class MastodonStream {
         readonly server_url: string,
         token: string,
         readonly account_host: string,
+        type = 'user',
     ) {
-        // const stream_url = new URL('/api/v1/streaming/user', server_url);
-        const stream_url = new URL('/api/v1/streaming/public', server_url);
+        const stream_url = new URL('/api/v1/streaming/' + type, server_url);
         stream_url.searchParams.append('access_token', token);
 
         debug('connecting to %s', stream_url.origin + stream_url.pathname);
@@ -96,8 +110,9 @@ export class MastodonStream {
     }
 
     async handleStatus(status: Status, event?: MessageEvent) {
-        debug('status from %s @%s', status.account.display_name, status.account.acct, event);
+        debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
 
+        this.last_status_id = status.id;
         let did_find_webhook = false;
 
         for await (const webhook of this.webhooks.getWebhooksForStatus(status, this.account_host)) {

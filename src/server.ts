@@ -1,5 +1,6 @@
 import path from 'node:path';
 import * as fs from 'node:fs/promises';
+import * as fs_sync from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import createDebug from 'debug';
 import { open } from 'sqlite';
@@ -30,9 +31,42 @@ export async function main() {
 
     const mastodon = new MastodonApi(process.env.MASTODON_URL!, process.env.MASTODON_TOKEN!,
         process.env.MASTODON_ACCT_HOST ?? new URL(process.env.MASTODON_URL!).hostname);
-    const stream = mastodon.createEventStream(webhooks);
 
     const discord = process.env.DISCORD_TOKEN ? new DiscordBot(db, mastodon, process.env.DISCORD_TOKEN) : null;
+
+    const state = await tryReadJson<{
+        last_status_id: string | null;
+    }>(path.join(data_path, 'state.json'));
+
+    process.on('exit', () => {
+        fs_sync.writeFileSync(path.join(data_path, 'state.json'), JSON.stringify({
+            last_status_id: stream?.last_status_id ?? state?.last_status_id,
+        }, null, 4) + '\n');
+    });
+
+    if (state?.last_status_id) {
+        debug('Checking for missed statuses since', state.last_status_id);
+
+        for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, 'public')) {
+            debug('Processing missed status %d from %s @%s',
+                status.id, status.account.display_name, status.account.acct);
+
+            state.last_status_id = status.id;
+
+            let did_find_webhook = false;
+
+            for await (const webhook of webhooks.getWebhooksForStatus(status, mastodon.account_host)) {
+                webhooks.executeWebhookForStatus(webhook, status, mastodon);
+                did_find_webhook = true;
+            }
+
+            if (!did_find_webhook) {
+                debug('No webhooks for status %d', status.id);
+            }
+        }
+    }
+
+    const stream = mastodon.createEventStream(webhooks, 'public');
 
     debug('acct host', mastodon.account_host);
 
@@ -47,9 +81,12 @@ export async function main() {
         stream.events.close();
         discord?.client.destroy();
     });
+}
 
-    process.on('beforeExit', () => {
-        stream.events.close();
-        discord?.client.destroy();
-    });
+async function tryReadJson<T>(file: string): Promise<T | null> {
+    try {
+        return JSON.parse(await fs.readFile(file, 'utf-8'));
+    } catch (err) {
+        return null;
+    }
 }
