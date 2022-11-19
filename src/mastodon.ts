@@ -220,18 +220,18 @@ export interface Status {
     sensitive: boolean;
     spoiler_text: string;
     visibility: 'direct';
-    language: string;
+    language: string | null;
     /** Identifier */
     uri: string;
     /** HTML URL */
-    url: string;
+    url: string | null;
     replies_count: number;
     reblogs_count: number;
     favourites_count: number;
     edited_at: string | null;
     /** HTML content */
     content: string;
-    reblog: unknown | null;
+    reblog: Status | null;
     application: {
         name: string;
         website: string | null;

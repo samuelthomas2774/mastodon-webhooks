@@ -62,38 +62,53 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
         super();
     }
 
-    formatPayload(status: Status) {
-        const markdown = turndown.turndown(status.content);
+    formatPayload(_status: Status) {
+        const embeds: APIEmbed[] = [];
 
-        const image = status.media_attachments.find(a => a.type === 'image');
+        let content = '';
+        let status: Status | null = _status;
 
-        const footer_text =
-            status.media_attachments.find(a => a.type !== 'image') ?
-                status.media_attachments.length + ' attachment' +
-                (status.media_attachments.length === 1 ? '' : 's') :
-            image && status.media_attachments.length > 1 ?
-                '+ ' + (status.media_attachments.length - 1) + ' image' +
-                (status.media_attachments.length === 2 ? '' : 's') :
-            null;
+        while (status) {
+            const markdown = turndown.turndown(status.content);
 
-        const embed: APIEmbed = {
-            author: {
-                name: status.account.display_name,
-                icon_url: status.account.avatar,
-                url: status.account.url,
-            },
-            description: markdown,
-            url: status.uri,
-            footer: footer_text ? {
-                text: footer_text,
-            } : undefined,
-            timestamp: status.created_at,
-            image: image ? {
-                url: image.url,
-                width: image.meta.original.width,
-                height: image.meta.original.height,
-            } : undefined,
-        };
+            const image = status.media_attachments.find(a => a.type === 'image');
+
+            const footer_text =
+                status.media_attachments.find(a => a.type !== 'image') ?
+                    status.media_attachments.length + ' attachment' +
+                    (status.media_attachments.length === 1 ? '' : 's') :
+                image && status.media_attachments.length > 1 ?
+                    '+ ' + (status.media_attachments.length - 1) + ' image' +
+                    (status.media_attachments.length === 2 ? '' : 's') :
+                null;
+
+            const embed: APIEmbed = {
+                author: {
+                    name: status.account.display_name,
+                    icon_url: status.account.avatar,
+                    url: status.account.url,
+                },
+                description: markdown,
+                url: status.uri,
+                footer: footer_text ? {
+                    text: footer_text,
+                } : undefined,
+                timestamp: status.created_at,
+                image: image ? {
+                    url: image.url,
+                    width: image.meta.original.width,
+                    height: image.meta.original.height,
+                } : undefined,
+            };
+
+            debug('Status %d embed', status.id, embed);
+
+            embeds.push(embed);
+            if (status.url) content += '\n' + status.url;
+            status = status.reblog;
+        }
+
+        status = _status;
 
         const status_acct = status.account.acct.includes('@') ?
             status.account.acct : status.account.acct + '@' + this.mastodon.account_host;
@@ -102,9 +117,8 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
             username: status.account.display_name + ' - @' + status_acct,
             avatar_url: status.account.avatar,
 
-            // content: status.content,
-            content: status.url,
-            embeds: [embed],
+            content,
+            embeds,
             allowedMentions: {},
         };
 
