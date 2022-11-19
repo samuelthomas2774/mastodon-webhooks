@@ -80,6 +80,9 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
                 status.media_attachments.find(a => a.type !== 'image') ?
                     status.media_attachments.length + ' attachment' +
                     (status.media_attachments.length === 1 ? '' : 's') :
+                (status.spoiler_text || status.sensitive) && status.media_attachments.length ?
+                    status.media_attachments.length + ' image' +
+                    (status.media_attachments.length === 1 ? '' : 's') :
                 image && status.media_attachments.length > 1 ?
                     '+ ' + (status.media_attachments.length - 1) + ' image' +
                     (status.media_attachments.length === 2 ? '' : 's') :
@@ -97,7 +100,7 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
                     text: footer_text,
                 } : undefined,
                 timestamp: status.created_at,
-                image: image ? {
+                image: image && !status.spoiler_text && !status.sensitive ? {
                     url: image.url,
                     width: image.meta.original.width,
                     height: image.meta.original.height,
