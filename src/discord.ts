@@ -4,7 +4,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatIn
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import Turndown from 'turndown';
-import MastodonApi, { Account, SearchResults } from './mastodon.js';
+import MastodonApi, { Account, FollowResult, SearchResults } from './mastodon.js';
 import { Webhook } from './webhook.js';
 
 const debug = createDebug('discord');
@@ -270,6 +270,7 @@ export default class DiscordBot {
             return;
         }
 
+        // Create webhook
         const webhook_id = await this.getWebhookIdForChannel(guild, channel);
 
         const result = await this.db.run(
