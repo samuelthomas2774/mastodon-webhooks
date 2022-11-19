@@ -69,7 +69,10 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
         let status: Status | null = _status;
 
         while (status) {
-            const markdown = turndown.turndown(status.content);
+            const markdown = status.spoiler_text ?
+                turndown.turndown(status.spoiler_text) + '\n\n' +
+                    turndown.turndown(status.content).replace(/^(.+)$/gm, '||$1||') :
+                turndown.turndown(status.content);
 
             const image = status.media_attachments.find(a => a.type === 'image');
 
