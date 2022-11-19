@@ -54,7 +54,7 @@ export async function main() {
     if (state?.last_status_id) {
         debug('Checking for missed statuses since', state.last_status_id);
 
-        for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, 'public')) {
+        for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, 'home')) {
             debug('Processing missed status %d from %s @%s',
                 status.id, status.account.display_name, status.account.acct);
 
@@ -73,7 +73,7 @@ export async function main() {
         }
     }
 
-    const stream = mastodon.createEventStream(webhooks, 'public');
+    const stream = mastodon.createEventStream(webhooks, 'user');
 
     debug('acct host', mastodon.account_host);
 
