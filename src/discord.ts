@@ -1,6 +1,6 @@
 import createDebug from 'debug';
 import { APIEmbed } from 'discord-api-types/v9';
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, ForumChannel, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, PrivateThreadChannel, PublicThreadChannel, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import Turndown from 'turndown';
@@ -112,7 +112,7 @@ export default class DiscordBot {
         const accounts = await this.findAccounts(id);
 
         if (accounts.length > 1) {
-            await interaction.editReply('Multiple results found');
+            await interaction.editReply('Multiple results found.');
         }
 
         for (const account of accounts.slice(0, 1)) {
@@ -128,20 +128,25 @@ export default class DiscordBot {
         }
 
         if (!accounts.length) {
-            await interaction.editReply('No result found');
+            await interaction.editReply('No results found.');
         }
     }
 
     async handleFollowingCommand(interaction: ChatInputCommandInteraction) {
-        if (!interaction.guild || !interaction.channel) {
+        const channel = interaction.channel?.isThread() ? interaction.channel.parent : interaction.channel;
+        const thread = interaction.channel?.isThread() ? interaction.channel : undefined;
+
+        if (!interaction.guild || !channel) {
             await interaction.reply('This action can only be performed in text channels in servers.');
             return;
         }
 
-        const discord_webhooks = await this.getWebhooksForChannel(interaction.guild, interaction.channel);
+        await interaction.deferReply();
 
-        const webhooks = await Promise.all(discord_webhooks.map(w => this.db.all<Webhook[]>(
-            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${w.url}`))).then(w => w.flat());
+        const discord_webhooks = await this.getWebhooksForChannel(interaction.guild, channel, thread);
+
+        const webhooks = await Promise.all(discord_webhooks.map(([w, url]) => this.db.all<Webhook[]>(
+            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${url}`))).then(w => w.flat());
 
         const [filter_accts, filter_hosts] = await Promise.all([
             Promise.all(webhooks.map(w => this.db.all<{acct: string}>(
@@ -172,16 +177,24 @@ export default class DiscordBot {
         }
 
         if (filter_accts.length) {
-            await interaction.reply({
+            await interaction.editReply({
                 content: 'Following ' + filter_accts.length + ' ActivityPub actor' +
-                    (filter_accts.length === 1 ? '' : 's') + ' in this channel',
+                    (filter_accts.length === 1 ? '' : 's') + ' in this ' + (thread ? 'thread' : 'channel') + '.',
                 embeds,
             });
-        } else await interaction.reply({content: 'Not following any ActivityPub actors in this channel', embeds});
+        } else {
+            await interaction.editReply({
+                content: 'Not following any ActivityPub actors in this ' + (thread ? 'thread' : 'channel') + '.',
+                embeds,
+            });
+        }
     }
 
     async handleFollowCommand(interaction: ChatInputCommandInteraction, id: string) {
-        if (!interaction.guild || !interaction.channel) {
+        const channel = interaction.channel?.isThread() ? interaction.channel.parent : interaction.channel;
+        const thread = interaction.channel?.isThread() ? interaction.channel : undefined;
+
+        if (!interaction.guild || !channel) {
             await interaction.reply('This action can only be performed in text channels in servers.');
             return;
         }
@@ -212,7 +225,7 @@ export default class DiscordBot {
             const embed = this.createAccountEmbed(account);
 
             // Check if a webhook already exists
-            const {filter_accts} = await this.getWebhooksForChannelActor(interaction.guild, interaction.channel, acct);
+            const {filter_accts} = await this.getWebhooksForChannelActor(interaction.guild, channel, thread, acct);
 
             if (filter_accts.length) {
                 await interaction.editReply({
@@ -238,11 +251,14 @@ export default class DiscordBot {
         }
 
         // Select this user
-        await this.follow(interaction, interaction.guild, interaction.channel, account);
+        await this.follow(interaction, interaction.guild, channel, thread, account);
     }
 
     async handleConfirmFollowButton(interaction: ButtonInteraction, id: string) {
-        if (!interaction.guild || !interaction.channel) {
+        const channel = interaction.channel?.isThread() ? interaction.channel.parent : interaction.channel;
+        const thread = interaction.channel?.isThread() ? interaction.channel : undefined;
+
+        if (!interaction.guild || !channel) {
             await interaction.reply('This action can only be performed in text channels in servers.');
             return;
         }
@@ -251,19 +267,20 @@ export default class DiscordBot {
 
         const account: Account = await this.mastodon.fetch('/api/v1/accounts/' + id);
 
-        await this.follow(interaction, interaction.guild, interaction.channel, account);
+        await this.follow(interaction, interaction.guild, channel, thread, account);
     }
 
     async follow(
         interaction: ChatInputCommandInteraction | ButtonInteraction,
-        guild: Guild, channel: TextBasedChannel,
+        guild: Guild, channel: TextBasedChannel | ForumChannel,
+        thread: PrivateThreadChannel | PublicThreadChannel | undefined,
         account: Account
     ) {
         const acct = account.acct.includes('@') ?
             account.acct : account.acct + '@' + this.mastodon.account_host;
 
         // Check if a webhook already exists
-        const {filter_accts} = await this.getWebhooksForChannelActor(guild, channel, acct);
+        const {filter_accts} = await this.getWebhooksForChannelActor(guild, channel, thread, acct);
 
         if (filter_accts.length) {
             await interaction.editReply('This actor is already being following in this channel.');
@@ -271,7 +288,7 @@ export default class DiscordBot {
         }
 
         // Create webhook
-        const webhook_id = await this.getWebhookIdForChannel(guild, channel);
+        const webhook_id = await this.getWebhookIdForChannel(guild, channel, thread);
 
         const result = await this.db.run(
             sql`INSERT INTO webhook_filter_acct (webhook_id, acct) VALUES (${webhook_id}, ${acct})`
@@ -304,11 +321,15 @@ export default class DiscordBot {
         await interaction.editReply(message);
     }
 
-    async getWebhooksForChannelActor(guild: Guild, channel: TextBasedChannel, acct: string) {
-        const discord_webhooks = await this.getWebhooksForChannel(guild, channel);
+    async getWebhooksForChannelActor(
+        guild: Guild, channel: TextBasedChannel | ForumChannel,
+        thread: PrivateThreadChannel | PublicThreadChannel | undefined,
+        acct: string
+    ) {
+        const discord_webhooks = await this.getWebhooksForChannel(guild, channel, thread);
 
-        const webhooks = await Promise.all(discord_webhooks.map(w => this.db.all<Webhook[]>(
-            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${w.url}`))).then(w => w.flat());
+        const webhooks = await Promise.all(discord_webhooks.map(([w, url]) => this.db.all<Webhook[]>(
+            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${url}`))).then(w => w.flat());
 
         const filter_accts = await Promise.all(webhooks.map(w => this.db.all<{
             id: number;
@@ -346,13 +367,15 @@ export default class DiscordBot {
         return result.accounts;
     }
 
-    async getWebhookForChannel(guild: Guild, channel: TextBasedChannel) {
-        const webhooks = await this.getWebhooksForChannel(guild, channel);
+    async getWebhookForChannel(
+        guild: Guild, channel: TextBasedChannel | ForumChannel, thread?: PrivateThreadChannel | PublicThreadChannel
+    ) {
+        const webhooks = await this.getWebhooksForChannel(guild, channel, thread);
 
-        for (const [id, webhook] of webhooks) {
-            debug('webhook', id, webhook, webhook.token, webhook.url);
+        for (const [webhook, url] of webhooks) {
+            debug('webhook', webhook, webhook.token, url);
 
-            return webhook;
+            return [webhook, url] as const;
         }
 
         const webhook = await guild.channels.createWebhook({
@@ -362,24 +385,30 @@ export default class DiscordBot {
 
         debug('Created webhook', webhook.id, webhook, webhook.token);
 
-        return webhook;
+        return [webhook, thread ? webhook.url + '?thread_id=' + thread.id : webhook.url] as const;
     }
 
-    async getWebhooksForChannel(guild: Guild, channel: TextBasedChannel) {
+    async getWebhooksForChannel(
+        guild: Guild, channel: TextBasedChannel | ForumChannel, thread?: PrivateThreadChannel | PublicThreadChannel
+    ) {
         const webhooks = await guild.channels.fetchWebhooks(channel.id);
 
-        return webhooks.filter(w => w.token);
+        return webhooks
+            .filter(w => w.url)
+            .map(w => [w, thread ? w.url + '?thread_id=' + thread.id : w.url] as const);
     }
 
-    async getWebhookIdForChannel(guild: Guild, channel: TextBasedChannel) {
-        const discord_webhook = await this.getWebhookForChannel(guild, channel);
+    async getWebhookIdForChannel(
+        guild: Guild, channel: TextBasedChannel | ForumChannel, thread?: PrivateThreadChannel | PublicThreadChannel
+    ) {
+        const [discord_webhook, webhook_url] = await this.getWebhookForChannel(guild, channel, thread);
 
         const webhook = await this.db.get<Webhook>(
-            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${discord_webhook.url}`);
+            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${webhook_url}`);
         if (webhook) return webhook.id;
 
         const result = await this.db.run(
-            sql`INSERT INTO webhooks (type, url) VALUES ('discord', ${discord_webhook.url})`);
+            sql`INSERT INTO webhooks (type, url) VALUES ('discord', ${webhook_url})`);
 
         debug('Created webhook entry', result);
 
