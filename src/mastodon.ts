@@ -175,6 +175,21 @@ export interface Account {
     }[];
 }
 
+export interface FollowResult {
+    id: string;
+    following: boolean;
+    showing_reblogs: boolean;
+    notifying: boolean;
+    followed_by: boolean;
+    blocking: boolean;
+    blocked_by: boolean;
+    muting: boolean;
+    muting_notifications: boolean;
+    requested: boolean;
+    domain_blocking: boolean;
+    endorsed: boolean;
+}
+
 export interface MediaAttachmentImageMeta {
     width: number;
     height: number;

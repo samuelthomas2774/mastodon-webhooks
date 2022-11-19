@@ -1,10 +1,10 @@
 import createDebug from 'debug';
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
 import { APIEmbed } from 'discord-api-types/v9';
-import Turndown from 'turndown';
-import { Database } from 'sqlite';
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
 import sql from 'sql-template-strings';
-import MastodonApi, { Account, SearchResults, Status } from './mastodon.js';
+import { Database } from 'sqlite';
+import Turndown from 'turndown';
+import MastodonApi, { Account, SearchResults } from './mastodon.js';
 import { Webhook } from './webhook.js';
 
 const debug = createDebug('discord');
@@ -209,14 +209,25 @@ export default class DiscordBot {
             '@' + acct !== id &&
             account.url !== id
         ) {
+            const embed = this.createAccountEmbed(account);
+
+            // Check if a webhook already exists
+            const {filter_accts} = await this.getWebhooksForChannelActor(interaction.guild, interaction.channel, acct);
+
+            if (filter_accts.length) {
+                await interaction.editReply({
+                    content: 'This actor is already being following in this channel.\n\n' + account.url,
+                    embeds: [embed],
+                });
+                return;
+            }
+
             // Ask for confirmation
             const row = new ActionRowBuilder()
                 .addComponents(new ButtonBuilder()
                     .setCustomId('follow:' + account.id)
                     .setLabel('Confirm')
                     .setStyle(ButtonStyle.Primary));
-
-            const embed = this.createAccountEmbed(account);
 
             await interaction.editReply({
                 content: 'Follow this user?\n\n' + account.url,
@@ -252,16 +263,64 @@ export default class DiscordBot {
             account.acct : account.acct + '@' + this.mastodon.account_host;
 
         // Check if a webhook already exists
-        // Follow + create webhook
+        const {filter_accts} = await this.getWebhooksForChannelActor(guild, channel, acct);
+
+        if (filter_accts.length) {
+            await interaction.editReply('This actor is already being following in this channel.');
+            return;
+        }
+
+        const webhook_id = await this.getWebhookIdForChannel(guild, channel);
+
+        const result = await this.db.run(
+            sql`INSERT INTO webhook_filter_acct (webhook_id, acct) VALUES (${webhook_id}, ${acct})`
+        );
+
+        debug('Create webhook result', result);
+
+        // Follow
+        let follow_result;
+        try {
+            const result: FollowResult =
+                await this.mastodon.fetch('/api/v1/accounts/' + account.id + '/follow', 'POST');
+            follow_result = {result};
+        } catch (error) {
+            follow_result = {error};
+        }
+
+        debug('Follow result', follow_result);
 
         const embed = this.createAccountEmbed(account);
 
         const message = {
-            content: 'Following ' + account.url,
+            content:
+                'result' in follow_result && follow_result.result.requested ? 'A follow request has been sent to ' + account.url + '. Statuses may not be delivered until the request is accepted.' :
+                'error' in follow_result ? 'The Mastodon bot was unable to send a follow request to ' + account.url + '. The webhook has been created, but statuses may not be delivered.' :
+                'Following ' + account.url,
             embeds: [embed],
         };
 
         await interaction.editReply(message);
+    }
+
+    async getWebhooksForChannelActor(guild: Guild, channel: TextBasedChannel, acct: string) {
+        const discord_webhooks = await this.getWebhooksForChannel(guild, channel);
+
+        const webhooks = await Promise.all(discord_webhooks.map(w => this.db.all<Webhook[]>(
+            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${w.url}`))).then(w => w.flat());
+
+        const filter_accts = await Promise.all(webhooks.map(w => this.db.all<{
+            id: number;
+            webhook_id: number;
+            acct: string;
+        }>(
+            sql`SELECT id,webhook_id,acct FROM webhook_filter_acct WHERE webhook_id = ${w.id} AND acct = ${acct}`
+        ))).then(f => f.flat());
+
+        return {
+            webhooks: webhooks.filter(w => filter_accts.find(f => f.webhook_id === w.id)),
+            filter_accts,
+        };
     }
 
     async findAccounts(q: string) {
@@ -309,6 +368,21 @@ export default class DiscordBot {
         const webhooks = await guild.channels.fetchWebhooks(channel.id);
 
         return webhooks.filter(w => w.token);
+    }
+
+    async getWebhookIdForChannel(guild: Guild, channel: TextBasedChannel) {
+        const discord_webhook = await this.getWebhookForChannel(guild, channel);
+
+        const webhook = await this.db.get<Webhook>(
+            sql`SELECT * FROM webhooks WHERE type = 'discord' AND url = ${discord_webhook.url}`);
+        if (webhook) return webhook.id;
+
+        const result = await this.db.run(
+            sql`INSERT INTO webhooks (type, url) VALUES ('discord', ${discord_webhook.url})`);
+
+        debug('Created webhook entry', result);
+
+        return result.lastID;
     }
 
     createAccountEmbed(account: Account, include_fields = false) {
