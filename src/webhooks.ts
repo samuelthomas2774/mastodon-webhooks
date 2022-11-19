@@ -1,7 +1,7 @@
 import createDebug from 'debug';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
-import MastodonStream, { Status } from './mastodon.js';
+import MastodonApi, { Status } from './mastodon.js';
 import { executeStatusWebhook, Webhook } from './webhook.js';
 
 const debug = createDebug('webhooks');
@@ -41,7 +41,7 @@ export default class WebhookManager {
         }
     }
 
-    async executeWebhookForStatus(webhook: Webhook, status: Status, mastodon: MastodonStream) {
+    async executeWebhookForStatus(webhook: Webhook, status: Status, mastodon: MastodonApi) {
         try {
             await executeStatusWebhook(webhook, status, mastodon);
 

@@ -4,8 +4,9 @@ import { fileURLToPath } from 'node:url';
 import createDebug from 'debug';
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
-import MastodonStream from './mastodon.js';
+import MastodonApi from './mastodon.js';
 import WebhookManager from './webhooks.js';
+import DiscordBot from './discord.js';
 
 const debug = createDebug('server');
 
@@ -27,22 +28,28 @@ export async function main() {
 
     const webhooks = new WebhookManager(db);
 
-    const mastodon = new MastodonStream(webhooks, process.env.MASTODON_URL!, process.env.MASTODON_TOKEN!,
+    const mastodon = new MastodonApi(process.env.MASTODON_URL!, process.env.MASTODON_TOKEN!,
         process.env.MASTODON_ACCT_HOST ?? new URL(process.env.MASTODON_URL!).hostname);
+    const stream = mastodon.createEventStream(webhooks);
+
+    const discord = process.env.DISCORD_TOKEN ? new DiscordBot(db, mastodon, process.env.DISCORD_TOKEN) : null;
 
     debug('acct host', mastodon.account_host);
 
     process.on('SIGINT', () => {
-        debug('SIGINT, closing stream');
-        mastodon.events.close();
+        debug('SIGINT, shutting down');
+        stream.events.close();
+        discord?.client.destroy();
     });
 
     process.on('SIGTERM', () => {
-        debug('SIGTERM, closing stream');
-        mastodon.events.close();
+        debug('SIGTERM, shutting down');
+        stream.events.close();
+        discord?.client.destroy();
     });
 
     process.on('beforeExit', () => {
-        mastodon.events.close();
+        stream.events.close();
+        discord?.client.destroy();
     });
 }

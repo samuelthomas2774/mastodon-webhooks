@@ -2,7 +2,7 @@ import createDebug from 'debug';
 import { WebhookCreateMessageOptions } from 'discord.js';
 import { APIEmbed } from 'discord-api-types/v9';
 import Turndown from 'turndown';
-import MastodonStream, { Status } from './mastodon.js';
+import MastodonApi, { Status } from './mastodon.js';
 
 const debug = createDebug('webhook');
 const debugDiscord = createDebug('webhook:discord');
@@ -19,8 +19,8 @@ export enum WebhookType {
     DISCORD = 'discord',
 }
 
-export async function executeStatusWebhook(webhook: Webhook, status: Status, mastodon: MastodonStream) {
-    debug('Posting status %d to %s webhook %s', status.id, webhook.type, webhook.url);
+export async function executeStatusWebhook(webhook: Webhook, status: Status, mastodon: MastodonApi) {
+    debug('Posting status %d to %s webhook %d %s', status.id, webhook.type, webhook.id, new URL(webhook.url).origin);
 
     try {
         await StatusWebhookExecutor.create(webhook.type, mastodon).send(webhook, status);
@@ -31,7 +31,7 @@ export async function executeStatusWebhook(webhook: Webhook, status: Status, mas
 }
 
 class StatusWebhookExecutor {
-    static create(type: WebhookType, mastodon: MastodonStream) {
+    static create(type: WebhookType, mastodon: MastodonApi) {
         if (type === WebhookType.MASTODON) return new StatusWebhookExecutor();
         if (type === WebhookType.DISCORD) return new StatusWebhookExecutorDiscord(mastodon);
 
@@ -57,7 +57,7 @@ class StatusWebhookExecutor {
 
 class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
     constructor(
-        readonly mastodon: MastodonStream
+        readonly mastodon: MastodonApi
     ) {
         super();
     }
