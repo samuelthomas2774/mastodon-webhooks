@@ -67,6 +67,15 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
 
         const image = status.media_attachments.find(a => a.type === 'image');
 
+        const footer_text =
+            status.media_attachments.find(a => a.type !== 'image') ?
+                status.media_attachments.length + ' attachment' +
+                (status.media_attachments.length === 1 ? '' : 's') :
+            image && status.media_attachments.length > 1 ?
+                '+ ' + (status.media_attachments.length - 1) + ' image' +
+                (status.media_attachments.length === 2 ? '' : 's') :
+            null;
+
         const embed: APIEmbed = {
             author: {
                 name: status.account.display_name,
@@ -75,6 +84,9 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
             },
             description: markdown,
             url: status.uri,
+            footer: footer_text ? {
+                text: footer_text,
+            } : undefined,
             timestamp: status.created_at,
             image: image ? {
                 url: image.url,
