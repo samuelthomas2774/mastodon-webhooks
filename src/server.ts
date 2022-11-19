@@ -29,7 +29,7 @@ export async function main() {
 
     const webhooks = new WebhookManager(db);
 
-    const mastodon = new MastodonApi(process.env.MASTODON_URL!, process.env.MASTODON_TOKEN!,
+    const mastodon = new MastodonApi(process.env.MASTODON_URL!, process.env.MASTODON_TOKEN,
         process.env.MASTODON_ACCT_HOST ?? new URL(process.env.MASTODON_URL!).hostname);
 
     const discord = process.env.DISCORD_TOKEN ? new DiscordBot(db, mastodon, process.env.DISCORD_TOKEN) : null;
@@ -54,7 +54,9 @@ export async function main() {
     if (state?.last_status_id) {
         debug('Checking for missed statuses since', state.last_status_id);
 
-        for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, 'home')) {
+        const timeline_name = process.env.MASTODON_TIMELINE || (mastodon.authenticated ? 'home' : 'public');
+
+        for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, timeline_name)) {
             debug('Processing missed status %d from %s @%s',
                 status.id, status.account.display_name, status.account.acct);
 
@@ -73,7 +75,12 @@ export async function main() {
         }
     }
 
-    const stream = mastodon.createEventStream(webhooks, 'user');
+    const stream_name = process.env.MASTODON_TIMELINE === 'home' ? 'user' :
+        process.env.MASTODON_TIMELINE?.startsWith('tag/') ? 'hashtag?tag=' + process.env.MASTODON_TIMELINE.substr(4) :
+        process.env.MASTODON_TIMELINE?.startsWith('list/') ? 'list?list=' + process.env.MASTODON_TIMELINE.substr(5) :
+        process.env.MASTODON_TIMELINE || (mastodon.authenticated ? 'user' : 'public');
+
+    const stream = mastodon.createEventStream(webhooks, stream_name);
 
     debug('acct host', mastodon.account_host);
 

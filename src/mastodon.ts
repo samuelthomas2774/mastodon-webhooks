@@ -7,14 +7,20 @@ const debug = createDebug('mastodon');
 export default class MastodonApi {
     constructor(
         readonly server_url: string,
-        private token: string,
+        private token: string | undefined,
         readonly account_host: string,
     ) {}
 
+    get authenticated() {
+        return !!this.token;
+    }
+
     async fetch(url: URL | string, method = 'GET', body?: string | object) {
-        const headers = new Headers({
-            'Authorization': 'Bearer ' + this.token,
-        });
+        const headers = new Headers();
+
+        if (this.token) {
+            headers.set('Authorization', 'Bearer ' + this.token);
+        }
 
         if (body) {
             headers.set('Content-Type', 'application/json');
@@ -37,7 +43,7 @@ export default class MastodonApi {
         return response.json();
     }
 
-    async *getTimelineStatusesSince(last_status_id: string, timeline = 'home') {
+    async *getTimelineStatusesSince(last_status_id: string, timeline = this.token ? 'home' : 'public') {
         let statuses: Status[];
 
         do {
@@ -54,7 +60,7 @@ export default class MastodonApi {
         } while (statuses.length);
     }
 
-    createEventStream(webhooks: WebhookManager, type = 'user') {
+    createEventStream(webhooks: WebhookManager, type = this.token ? 'user' : 'public') {
         return new MastodonStream(this, webhooks, this.server_url, this.token, this.account_host, type);
     }
 }
@@ -68,12 +74,12 @@ export class MastodonStream {
         readonly api: MastodonApi,
         readonly webhooks: WebhookManager,
         readonly server_url: string,
-        token: string,
+        token: string | undefined,
         readonly account_host: string,
         type = 'user',
     ) {
         const stream_url = new URL('/api/v1/streaming/' + type, server_url);
-        stream_url.searchParams.append('access_token', token);
+        if (token) stream_url.searchParams.append('access_token', token);
 
         debug('connecting to %s', stream_url.origin + stream_url.pathname);
 

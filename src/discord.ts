@@ -313,9 +313,11 @@ export default class DiscordBot {
         // Follow
         let follow_result;
         try {
-            const result: FollowResult =
-                await this.mastodon.fetch('/api/v1/accounts/' + account.id + '/follow', 'POST');
-            follow_result = {result};
+            if (this.mastodon.authenticated) {
+                const result: FollowResult =
+                    await this.mastodon.fetch('/api/v1/accounts/' + account.id + '/follow', 'POST');
+                follow_result = {result};
+            }
         } catch (error) {
             follow_result = {error};
         }
@@ -326,8 +328,13 @@ export default class DiscordBot {
 
         const message = {
             content:
+                // Not authenticated, will use public timeline
+                !follow_result ? 'Following ' + account.url :
+                // Actor requires follower approval, sent request
                 'result' in follow_result && follow_result.result.requested ? 'A follow request has been sent to ' + account.url + '. Statuses may not be delivered until the request is accepted.' :
+                // Error sending follow reqeust
                 'error' in follow_result ? 'The Mastodon bot was unable to send a follow request to ' + account.url + '. The webhook has been created, but statuses may not be delivered.' :
+                // Following
                 'Following ' + account.url,
             embeds: [embed],
         };
