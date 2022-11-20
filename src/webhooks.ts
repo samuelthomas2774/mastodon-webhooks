@@ -2,13 +2,24 @@ import createDebug from 'debug';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import MastodonApi, { Status } from './mastodon.js';
-import { executeStatusWebhook, Webhook } from './webhook.js';
+import { executeStatusWebhook, Webhook, WebhookType } from './webhook.js';
 
 const debug = createDebug('webhooks');
+
+export interface ConfigData {
+    webhooks: ConfigWebhook[];
+}
+export interface ConfigWebhook {
+    url: string;
+    type?: WebhookType;
+    acct?: string | string[];
+    host?: string | string[];
+}
 
 export default class WebhookManager {
     constructor(
         readonly db: Database,
+        readonly config_webhooks?: ConfigData,
     ) {}
 
     async *getWebhooksForStatus(status: Status, acct_host: string): AsyncGenerator<Webhook> {
@@ -16,6 +27,16 @@ export default class WebhookManager {
             status.account.acct : status.account.acct + '@' + acct_host;
         const status_acct_host = status.account.acct.includes('@') ?
             status.account.acct.substr(status.account.acct.lastIndexOf('@') + 1) : acct_host;
+
+        for (const webhook of this.config_webhooks?.webhooks ?? []) {
+            if (this.checkWebhookMatchesStatus(webhook, status, status_acct, status_acct_host)) {
+                yield {
+                    id: -1,
+                    type: webhook.type ?? WebhookType.MASTODON,
+                    url: webhook.url,
+                };
+            }
+        }
 
         const ids = new Set<number>();
 
@@ -39,6 +60,18 @@ export default class WebhookManager {
             const webhook = await this.db.get<Webhook>(sql`SELECT id,type,url FROM webhooks WHERE id = ${id}`);
             if (webhook) yield webhook;
         }
+    }
+
+    protected checkWebhookMatchesStatus(webhook: ConfigWebhook, status: Status, acct: string, host: string) {
+        for (const filter_acct of typeof webhook.acct === 'string' ? [webhook.acct] : webhook.acct ?? []) {
+            if (filter_acct === acct) return true;
+        }
+
+        for (const filter_host of typeof webhook.host === 'string' ? [webhook.host] : webhook.host ?? []) {
+            if (filter_host === host) return true;
+        }
+
+        return false;
     }
 
     async executeWebhookForStatus(webhook: Webhook, status: Status, mastodon: MastodonApi) {

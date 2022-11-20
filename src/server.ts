@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import createDebug from 'debug';
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
+import { parse } from 'yaml';
 import MastodonApi from './mastodon.js';
-import WebhookManager from './webhooks.js';
+import WebhookManager, { ConfigData } from './webhooks.js';
 import DiscordBot from './discord.js';
 
 const debug = createDebug('server');
@@ -18,6 +19,11 @@ export async function main() {
 
     await fs.mkdir(data_path, {recursive: true});
 
+    const config_yaml = await tryReadFile(path.join(data_path, 'webhooks.yaml'));
+    const config_webhooks: ConfigData | undefined = config_yaml ? parse(config_yaml) : undefined;
+
+    debug('Loaded %d webhooks from webhooks.yaml', config_webhooks?.webhooks.length);
+
     const db = await open({
         filename: path.join(data_path, 'database.db'),
         driver: sqlite3.Database,
@@ -27,7 +33,7 @@ export async function main() {
         migrationsPath: path.join(fileURLToPath(import.meta.url), '..', '..', 'migrations'),
     });
 
-    const webhooks = new WebhookManager(db);
+    const webhooks = new WebhookManager(db, config_webhooks);
 
     const mastodon = new MastodonApi(process.env.MASTODON_URL!, process.env.MASTODON_TOKEN,
         process.env.MASTODON_ACCT_HOST ?? new URL(process.env.MASTODON_URL!).hostname);
@@ -98,6 +104,14 @@ export async function main() {
 
     // Update saved state every minute
     setInterval(() => updateSavedState(), 60000).unref();
+}
+
+async function tryReadFile(file: string) {
+    try {
+        return await fs.readFile(file, 'utf-8');
+    } catch (err) {
+        return null;
+    }
 }
 
 async function tryReadJson<T>(file: string): Promise<T | null> {
