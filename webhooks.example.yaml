@@ -1,0 +1,12 @@
+webhooks:
+
+  - url: https://example.com/...
+    acct: user@mastodon.example.com
+
+  - url: https://discord.com/api/webhooks/...
+    type: discord
+    acct: user@mastodon.example.com
+
+  - url: https://example.com/...
+    acct:
+      - user@mastodon.example.com
