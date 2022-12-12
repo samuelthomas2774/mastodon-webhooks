@@ -154,7 +154,7 @@ class MastodonStreamWebSocket extends MastodonStream {
 
         ws.onmessage = event => {
             const data = JSON.parse(event.data.toString());
-            debug('WebSocket received', data, event);
+            debug('WebSocket received', data);
 
             this.handleMessage(event, data);
         };

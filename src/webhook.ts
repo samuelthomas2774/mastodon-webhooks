@@ -120,7 +120,10 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
             status.account.acct : status.account.acct + '@' + this.mastodon.account_host;
 
         const message /* : WebhookCreateMessageOptions */ = {
-            username: status.account.display_name + ' - @' + status_acct,
+            username: status.account.display_name
+                .replace(/:[0-9a-z-_]+:/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim() + ' - @' + status_acct,
             avatar_url: status.account.avatar,
 
             content,
