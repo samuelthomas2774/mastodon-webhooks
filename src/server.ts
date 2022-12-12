@@ -22,7 +22,7 @@ export async function main() {
     const config_yaml = await tryReadFile(path.join(data_path, 'webhooks.yaml'));
     const config_webhooks: ConfigData | undefined = config_yaml ? parse(config_yaml) : undefined;
 
-    debug('Loaded %d webhooks from webhooks.yaml', config_webhooks?.webhooks.length);
+    debug('Loaded %d webhooks from webhooks.yaml', config_webhooks?.webhooks.length ?? 0);
 
     const db = await open({
         filename: path.join(data_path, 'database.db'),

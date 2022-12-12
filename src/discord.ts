@@ -63,10 +63,18 @@ export default class DiscordBot {
 
         this.client.on('ready', client => this.handleClientReady(client));
         this.client.on('interactionCreate', interaction => this.handleInteraction(interaction));
+
+        this.client.on('guildCreate', guild => {
+            debug('Joined guild %d %s', guild.id, guild.name);
+        });
     }
 
     async handleClientReady(client: Client<true>) {
         debug('Logged in as %s', client.user.tag);
+
+        for (const [id, guild] of client.guilds.cache) {
+            debug('Connected to guild %d %s', guild.id, guild.name);
+        }
 
         this.registerCommands(client.application.id);
     }
@@ -139,6 +147,10 @@ export default class DiscordBot {
 
     async handleLookupCommand(interaction: ChatInputCommandInteraction, id: string) {
         await interaction.deferReply();
+
+        if (id === 'error') {
+            throw new Error('oh no    :(');
+        }
 
         const accounts = await this.findAccounts(id);
 
@@ -597,7 +609,7 @@ export default class DiscordBot {
 
                 ...include_fields ? account.fields.map(field => ({
                     name: field.name,
-                    value: turndown.turndown(field.value),
+                    value: turndown.turndown(field.value).trim() || '-',
                 })) : [],
             ],
             timestamp: account.created_at,

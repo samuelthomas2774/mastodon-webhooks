@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  webhooks:
+    build: .
+    restart: unless-stopped
+    environment:
+      DEBUG: '*'
+    env_file: .env
+    volumes:
+      - data:/data
+
+volumes:
+  data:

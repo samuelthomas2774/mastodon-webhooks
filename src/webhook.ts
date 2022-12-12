@@ -45,13 +45,21 @@ class StatusWebhookExecutor {
     async send(webhook: Webhook, status: Status) {
         const payload = this.formatPayload(status);
 
-        await fetch(webhook.url, {
+        const response = await fetch(webhook.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload),
         });
+
+        debug('Webhook %d for status %d delivered, response %d %s',
+            webhook.id, status.id, response.status, response.statusText);
+
+        if (!response.ok) {
+            const body = await response.text();
+            debug('Webhook %d for status %d response', webhook.id, status.id, response, body);
+        }
     }
 }
 

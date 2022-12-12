@@ -4,6 +4,8 @@ import EventSource from 'eventsource';
 import WebhookManager from './webhooks.js';
 
 const debug = createDebug('mastodon');
+const debugWebSocket = createDebug('mastodon:ws');
+const debugEventSource = createDebug('mastodon:es');
 
 export default class MastodonApi {
     constructor(
@@ -90,6 +92,11 @@ export abstract class MastodonStream {
     async handleStatus(status: Status, event?: MessageEvent) {
         debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
 
+        if (this.last_status_id && BigInt(this.last_status_id) >= BigInt(status.id)) {
+            debug('Skipping handling status %d, already processed this/newer status (did Mastodon send this status twice??)', status.id);
+            return;
+        }
+
         this.last_status_id = status.id;
         let did_find_webhook = false;
 
@@ -136,25 +143,31 @@ class MastodonStreamWebSocket extends MastodonStream {
     }
 
     createSocket() {
-        debug('WebSocket connecting');
+        debugWebSocket('WebSocket connecting');
 
         const ws = new WebSocket(this.socket_url);
 
+        let interval: NodeJS.Timeout | null = null;
+
         ws.onopen = event => {
-            debug('WebSocket connected');
+            debugWebSocket('WebSocket connected');
+
+            interval = setInterval(() => ws.ping(), 10000)
             this.handleOpen(event);
         };
 
         ws.onclose = event => {
-            debug('WebSocket connection closed', event);
+            debugWebSocket('WebSocket connection closed', event);
 
             this.socket = null;
+            clearInterval(interval!);
+            interval = null;
             this.handleClose(event);
         };
 
         ws.onmessage = event => {
             const data = JSON.parse(event.data.toString());
-            debug('WebSocket received', data);
+            debugWebSocket('WebSocket received', data);
 
             this.handleMessage(event, data);
         };
@@ -221,7 +234,7 @@ class MastodonStreamEventSource extends MastodonStream {
         const stream_url = new URL('/api/v1/streaming/' + type, server_url);
         if (token) stream_url.searchParams.append('access_token', token);
 
-        debug('connecting to %s', stream_url.origin + stream_url.pathname);
+        debugEventSource('connecting to %s', stream_url.origin + stream_url.pathname);
 
         this.events = new EventSource(stream_url.href, {
             headers: {
@@ -243,15 +256,15 @@ class MastodonStreamEventSource extends MastodonStream {
     }
 
     handleConnected(event: MessageEvent) {
-        debug('connected', event);
+        debugEventSource('connected', event);
     }
 
     handleError(event: MessageEvent) {
-        debug('error', event);
+        debugEventSource('error', event);
     }
 
     handleMessage(event: MessageEvent) {
-        debug('event', event);
+        debugEventSource('event', event);
     }
 
     handleStatusMessage(event: MessageEvent) {
