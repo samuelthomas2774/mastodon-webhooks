@@ -49,7 +49,7 @@ export default class MastodonApi {
 
         do {
             statuses = await this.fetch('/api/v1/timelines/' + timeline + '?' + new URLSearchParams({
-                since_id: last_status_id,
+                min_id: last_status_id,
             }).toString());
 
             statuses.sort((a, b) => Number(BigInt(a.id) - BigInt(b.id)));
