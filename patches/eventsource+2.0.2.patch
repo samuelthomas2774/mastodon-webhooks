@@ -1,0 +1,15 @@
+diff --git a/node_modules/eventsource/lib/eventsource.js b/node_modules/eventsource/lib/eventsource.js
+index bd401a1..80245e0 100644
+--- a/node_modules/eventsource/lib/eventsource.js
++++ b/node_modules/eventsource/lib/eventsource.js
+@@ -276,6 +276,10 @@ function EventSource (url, eventSourceInitDict) {
+       onConnectionClosed(err.message)
+     })
+ 
++    req.setTimeout(60000, () => {
++      req.socket.destroy(new Error('Timeout'));
++    });
++
+     if (req.setNoDelay) req.setNoDelay(true)
+     req.end()
+   }

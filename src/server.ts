@@ -81,24 +81,21 @@ export async function main() {
         }
     }
 
-    const stream_name = process.env.MASTODON_TIMELINE === 'home' ? 'user' :
-        process.env.MASTODON_TIMELINE?.startsWith('tag/') ? 'hashtag?tag=' + process.env.MASTODON_TIMELINE.substr(4) :
-        process.env.MASTODON_TIMELINE?.startsWith('list/') ? 'list?list=' + process.env.MASTODON_TIMELINE.substr(5) :
-        process.env.MASTODON_TIMELINE || (mastodon.authenticated ? 'user' : 'public');
-
-    const stream = mastodon.createEventStream(webhooks, stream_name);
+    const stream = mastodon.authenticated ?
+        mastodon.createSocketStream(webhooks, ['user', 'public']) :
+        mastodon.createEventStream(webhooks, 'public');
 
     debug('acct host', mastodon.account_host);
 
     process.on('SIGINT', () => {
         debug('SIGINT, shutting down');
-        stream.events.close();
+        stream.close();
         discord?.client.destroy();
     });
 
     process.on('SIGTERM', () => {
         debug('SIGTERM, shutting down');
-        stream.events.close();
+        stream.close();
         discord?.client.destroy();
     });
 

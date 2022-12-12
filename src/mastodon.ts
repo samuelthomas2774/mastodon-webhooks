@@ -1,4 +1,5 @@
 import createDebug from 'debug';
+import WebSocket, { Event } from 'ws';
 import EventSource from 'eventsource';
 import WebhookManager from './webhooks.js';
 
@@ -61,23 +62,162 @@ export default class MastodonApi {
     }
 
     createEventStream(webhooks: WebhookManager, type = this.token ? 'user' : 'public') {
-        return new MastodonStream(this, webhooks, this.server_url, this.token, this.account_host, type);
+        return new MastodonStreamEventSource(this, webhooks, this.server_url, this.token, this.account_host, type);
+    }
+
+    createSocketStream(webhooks: WebhookManager, type: readonly string[] = ['user', 'public']) {
+        if (!this.token) {
+            throw new Error('WebSocket streams require authentication');
+        }
+
+        // TODO: fetch streaming URL in case it's a separate host
+        return new MastodonStreamWebSocket(this, webhooks, this.server_url, this.token, this.account_host, type);
     }
 }
 
-export class MastodonStream {
-    events: EventSource;
-
+export abstract class MastodonStream {
     last_status_id: string | null = null;
 
     constructor(
         readonly api: MastodonApi,
         readonly webhooks: WebhookManager,
         readonly server_url: string,
-        token: string | undefined,
         readonly account_host: string,
+    ) {}
+
+    abstract close(): void;
+
+    async handleStatus(status: Status, event?: MessageEvent) {
+        debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
+
+        this.last_status_id = status.id;
+        let did_find_webhook = false;
+
+        for await (const webhook of this.webhooks.getWebhooksForStatus(status, this.account_host)) {
+            this.webhooks.executeWebhookForStatus(webhook, status, this.api);
+            did_find_webhook = true;
+        }
+
+        if (!did_find_webhook) {
+            debug('No webhooks for status %d', status.id);
+        }
+    }
+
+    handleStatusDeleted(status_id: string, event?: MessageEvent) {
+        debug('status deleted', status_id, event);
+    }
+
+    handleNotification(notification: AnyNotification, event?: MessageEvent) {
+        if ('account' in notification) debug('notification from %s', notification.account.acct, event);
+        else debug('notification', notification, event);
+    }
+}
+
+class MastodonStreamWebSocket extends MastodonStream {
+    protected socket: WebSocket | null;
+    private readonly socket_url: string;
+    protected _closed = false;
+
+    constructor(
+        api: MastodonApi,
+        webhooks: WebhookManager,
+        server_url: string,
+        token: string,
+        account_host: string,
+        readonly streams: readonly string[] = ['user', 'public'],
+    ) {
+        super(api, webhooks, server_url, account_host);
+
+        const socket_url = new URL('/api/v1/streaming', server_url.replace(/^http(s)?:/, 'ws$1:'));
+        socket_url.searchParams.append('access_token', token);
+
+        this.socket_url = socket_url.href;
+        this.socket = this.createSocket();
+    }
+
+    createSocket() {
+        debug('WebSocket connecting');
+
+        const ws = new WebSocket(this.socket_url);
+
+        ws.onopen = event => {
+            debug('WebSocket connected');
+            this.handleOpen(event);
+        };
+
+        ws.onclose = event => {
+            debug('WebSocket connection closed', event);
+
+            this.socket = null;
+            this.handleClose(event);
+        };
+
+        ws.onmessage = event => {
+            const data = JSON.parse(event.data.toString());
+            debug('WebSocket received', data, event);
+
+            this.handleMessage(event, data);
+        };
+
+        return ws;
+    }
+
+    close() {
+        this._closed = true;
+        this.socket?.close();
+    }
+
+    handleOpen(event: WebSocket.Event) {
+        for (const stream of this.streams) {
+            this.socket?.send(JSON.stringify({
+                type: 'subscribe',
+                stream,
+            }));
+        }
+    }
+
+    handleClose(event: WebSocket.CloseEvent) {
+        if (this._closed) return;
+
+        this.socket = this.createSocket();
+    }
+
+    handleMessage(event: WebSocket.MessageEvent, data: MastodonStreamWebSocketMessage) {
+        if (data.event === 'update') {
+            const status: Status = JSON.parse(data.payload);
+            this.handleStatus(status);
+        }
+        if (data.event === 'notification') {
+            const notification: AnyNotification = JSON.parse(data.payload);
+            this.handleNotification(notification);
+        }
+        if (data.event === 'delete') {
+            const status_id: string = data.payload;
+            this.handleStatusDeleted(status_id);
+        }
+    }
+}
+
+interface MastodonStreamWebSocketMessage {
+    stream: string[];
+    event: 'update' | 'notification' | 'delete';
+    // JSON-encoded data
+    payload: string;
+}
+
+class MastodonStreamEventSource extends MastodonStream {
+    events: EventSource;
+
+    constructor(
+        api: MastodonApi,
+        webhooks: WebhookManager,
+        server_url: string,
+        token: string | undefined,
+        account_host: string,
         type = 'user',
     ) {
+        super(api, webhooks, server_url, account_host);
+
         const stream_url = new URL('/api/v1/streaming/' + type, server_url);
         if (token) stream_url.searchParams.append('access_token', token);
 
@@ -98,6 +238,10 @@ export class MastodonStream {
         this.events.addEventListener('delete', event => this.handleStatusDeletedMessage(event));
     }
 
+    close() {
+        this.events.close();
+    }
+
     handleConnected(event: MessageEvent) {
         debug('connected', event);
     }
@@ -115,39 +259,14 @@ export class MastodonStream {
         this.handleStatus(status, event);
     }
 
-    async handleStatus(status: Status, event?: MessageEvent) {
-        debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
-
-        this.last_status_id = status.id;
-        let did_find_webhook = false;
-
-        for await (const webhook of this.webhooks.getWebhooksForStatus(status, this.account_host)) {
-            this.webhooks.executeWebhookForStatus(webhook, status, this.api);
-            did_find_webhook = true;
-        }
-
-        if (!did_find_webhook) {
-            debug('No webhooks for status %d', status.id);
-        }
-    }
-
     handleStatusDeletedMessage(event: MessageEvent) {
         const status_id = event.data;
         this.handleStatusDeleted(status_id, event);
     }
 
-    handleStatusDeleted(status_id: string, event?: MessageEvent) {
-        debug('status deleted', status_id, event);
-    }
-
     handleNotificationMessage(event: MessageEvent) {
         const notification: AnyNotification = JSON.parse(event.data);
         this.handleNotification(notification, event);
-    }
-
-    handleNotification(notification: AnyNotification, event: MessageEvent) {
-        if ('account' in notification) debug('notification from %s', notification.account.acct, event);
-        else debug('notification', notification, event);
     }
 }
 
