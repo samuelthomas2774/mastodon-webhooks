@@ -117,6 +117,23 @@ export default class DiscordBot {
             }
         } catch (err) {
             debug('Error handling interaction', interaction, err);
+
+            this.handleErrorInInteraction(interaction, err).catch(err2 => {
+                debug('Error handling error handling interaction', err2);
+            });
+        }
+    }
+
+    async handleErrorInInteraction(interaction: Interaction, error: unknown) {
+        if (interaction.isRepliable()) {
+            const embed: APIEmbed = {
+                description: error instanceof Error ? error.name + ': ' + error.message : 'Unknown error',
+                color: 0xff0000,
+            };
+
+            interaction.replied || interaction.deferred ?
+                await interaction.editReply({embeds: [embed]}) :
+                await interaction.reply({embeds: [embed]});
         }
     }
 
