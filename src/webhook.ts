@@ -119,11 +119,17 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
         const status_acct = status.account.acct.includes('@') ?
             status.account.acct : status.account.acct + '@' + this.mastodon.account_host;
 
+        let username = status.account.display_name
+            .replace(/:[0-9a-z-_]+:/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim() + ' - @' + status_acct;
+
+        if (username.includes('discord')) {
+            username = status_acct.includes('discord') ? '???' : '@' + status_acct;
+        }
+
         const message /* : WebhookCreateMessageOptions */ = {
-            username: status.account.display_name
-                .replace(/:[0-9a-z-_]+:/gi, '')
-                .replace(/\s+/g, ' ')
-                .trim() + ' - @' + status_acct,
+            username,
             avatar_url: status.account.avatar,
 
             content,
