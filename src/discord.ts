@@ -67,6 +67,9 @@ export default class DiscordBot {
         this.client.on('guildCreate', guild => {
             debug('Joined guild %d %s', guild.id, guild.name);
         });
+        this.client.on('guildDelete', guild => {
+            debug('Left guild %d %s', guild.id, guild.name);
+        });
     }
 
     async handleClientReady(client: Client<true>) {
@@ -550,6 +553,8 @@ export default class DiscordBot {
         const webhooks = await this.getWebhooksForChannel(guild, channel, thread);
 
         for (const [webhook, url] of webhooks) {
+            if (!webhook.token || webhook.applicationId !== this.client.application!.id) continue;
+
             debug('webhook', webhook, webhook.token, url);
 
             return [webhook, url] as const;
