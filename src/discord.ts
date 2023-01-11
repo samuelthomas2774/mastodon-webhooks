@@ -61,6 +61,13 @@ export default class DiscordBot {
         this.client.login(token);
         this.api = this.client.rest;
 
+        this.client.on('error', err => {
+            debug('client error', err);
+        });
+        this.client.on('debug', message => {
+            debug('client debug', message);
+        });
+
         this.client.on('ready', client => this.handleClientReady(client));
         this.client.on('interactionCreate', interaction => this.handleInteraction(interaction));
 
@@ -69,6 +76,10 @@ export default class DiscordBot {
         });
         this.client.on('guildDelete', guild => {
             debug('Left guild %d %s', guild.id, guild.name);
+        });
+        this.client.on('webhookUpdate', channel => {
+            debug('Received webhooks updated for channel %d %s in guild %d %s',
+                channel.id, channel.name, channel.guild.id, channel.guild.name);
         });
     }
 

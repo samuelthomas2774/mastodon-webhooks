@@ -89,13 +89,18 @@ export abstract class MastodonStream {
 
     abstract close(): void;
 
-    async handleStatus(status: Status, event?: MessageEvent) {
+    async handleStatus(status: Status, event?: MessageEvent, skip_public = false) {
         debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
 
-        if (this.last_status_id && BigInt(this.last_status_id) >= BigInt(status.id)) {
-            debug('Skipping handling status %d, already processed this/newer status (did Mastodon send this status twice??)', status.id);
+        if (skip_public && status.visibility === 'public') {
+            debug('Skipping public status %d from non-public stream, status will also be sent to home stream', status.id);
             return;
         }
+
+        // if (this.last_status_id && BigInt(this.last_status_id) >= BigInt(status.id)) {
+        //     debug('Skipping handling status %d, already processed this/newer status (did Mastodon send this status twice??)', status.id);
+        //     return;
+        // }
 
         this.last_status_id = status.id;
         let did_find_webhook = false;
@@ -198,7 +203,7 @@ class MastodonStreamWebSocket extends MastodonStream {
     handleMessage(event: WebSocket.MessageEvent, data: MastodonStreamWebSocketMessage) {
         if (data.event === 'update') {
             const status: Status = JSON.parse(data.payload);
-            this.handleStatus(status);
+            this.handleStatus(status, undefined, !data.stream.includes('public') && this.streams.includes('public'));
         }
         if (data.event === 'notification') {
             const notification: AnyNotification = JSON.parse(data.payload);
@@ -357,7 +362,13 @@ export interface Status {
     in_reply_to_account_id: string | null;
     sensitive: boolean;
     spoiler_text: string;
-    visibility: 'direct';
+    /**
+     * - public: Visible to everyone, shown in public timelines.
+     * - unlisted: Visible to public, but not included in public timelines.
+     * - private: Visible to followers only, and to any mentioned users.
+     * - direct: Visible only to mentioned users.
+     */
+    visibility: 'public' | 'unlisted' | 'private' | 'direct';
     language: string | null;
     /** Identifier */
     uri: string;
