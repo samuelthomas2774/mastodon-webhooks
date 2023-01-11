@@ -40,6 +40,26 @@ export async function main() {
 
     const discord = process.env.DISCORD_TOKEN ? new DiscordBot(db, mastodon, process.env.DISCORD_TOKEN) : null;
 
+    if (process.env.SEND_WEBHOOKS === '0') {
+        if (!discord) {
+            throw new Error('Cannot run Discord bot without sending webhooks without Discord token');
+        }
+
+        debug('Running Discord bot without sending webhooks');
+
+        process.on('SIGINT', () => {
+            debug('SIGINT, shutting down');
+            discord?.client.destroy();
+        });
+
+        process.on('SIGTERM', () => {
+            debug('SIGTERM, shutting down');
+            discord?.client.destroy();
+        });
+
+        return;
+    }
+
     const state = await tryReadJson<{
         last_status_id: string | null;
     }>(path.join(data_path, 'state.json'));

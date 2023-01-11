@@ -6,6 +6,17 @@ services:
     restart: unless-stopped
     environment:
       DEBUG: '*'
+      DISCORD_TOKEN: ''
+    env_file: .env
+    volumes:
+      - data:/data
+
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      DEBUG: '*'
+      SEND_WEBHOOKS: '0'
     env_file: .env
     volumes:
       - data:/data
