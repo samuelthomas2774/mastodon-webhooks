@@ -149,7 +149,7 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
     }
 
     async send(webhook: Webhook, status: Status) {
-        if (status.media_attachments.find(a => a.type === 'image')) {
+        if (status.uri.startsWith(this.mastodon.server_url) && status.media_attachments.find(a => a.type === 'image')) {
             debugDiscord('Waiting 15s before posting status %d to Discord webhook %d', status.id, webhook.id);
             await new Promise(rs => setTimeout(rs, 15000));
         }
