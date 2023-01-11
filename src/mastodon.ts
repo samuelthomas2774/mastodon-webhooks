@@ -92,7 +92,7 @@ export abstract class MastodonStream {
     async handleStatus(status: Status, event?: MessageEvent, skip_public = false) {
         debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
 
-        if (skip_public && status.visibility === 'public') {
+        if (skip_public && status.visibility === 'public' && !status.reblog) {
             debug('Skipping public status %d from non-public stream, status will also be sent to home stream', status.id);
             return;
         }
