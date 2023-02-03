@@ -92,15 +92,12 @@ export abstract class MastodonStream {
     async handleStatus(status: Status, event?: MessageEvent, skip_public = false) {
         debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
 
-        if (skip_public && status.visibility === 'public' && !status.reblog && !status.in_reply_to_id) {
+        if (skip_public && status.visibility === 'public' && !status.reblog &&
+            (!status.in_reply_to_id || status.in_reply_to_account_id === status.account.id)
+        ) {
             debug('Skipping public status %d from non-public stream, status will also be sent to public stream', status.id);
             return;
         }
-
-        // if (this.last_status_id && BigInt(this.last_status_id) >= BigInt(status.id)) {
-        //     debug('Skipping handling status %d, already processed this/newer status (did Mastodon send this status twice??)', status.id);
-        //     return;
-        // }
 
         this.last_status_id = status.id;
         let did_find_webhook = false;
