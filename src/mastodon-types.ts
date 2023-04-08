@@ -216,8 +216,8 @@ export interface InstanceInfo {
     rules: unknown[];
 }
 
-export const MastodonStreamPayloadTypeSymbol = Symbol();
-export type MastodonStreamPayloadTypeSymbol = typeof MastodonStreamPayloadTypeSymbol;
+const MastodonStreamPayloadTypeSymbol = Symbol();
+type MastodonStreamPayloadTypeSymbol = typeof MastodonStreamPayloadTypeSymbol;
 
 export type MastodonStreamWebSocketMessage =
     MastodonStreamWebSocketMessageUpdate |
@@ -230,6 +230,9 @@ export type MastodonStreamWebSocketMessage =
     MastodonStreamWebSocketMessageAnnouncementDelete |
     MastodonStreamWebSocketMessageStatusUpdate |
     MastodonStreamWebSocketMessageEncryptedMessage;
+
+export type MastodonStreamWebSocketMessagePayloadType<T extends MastodonStreamWebSocketMessage> =
+    T extends {[MastodonStreamPayloadTypeSymbol]: infer P} ? P : never;
 
 interface MastodonStreamWebSocketMessageUpdate {
     stream: string[];

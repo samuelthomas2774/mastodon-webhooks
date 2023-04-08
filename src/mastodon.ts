@@ -1,9 +1,9 @@
 import createDebug from 'debug';
-import WebSocket, { Event } from 'ws';
+import WebSocket from 'ws';
 import EventSource from 'eventsource';
 import WebhookManager from './webhooks.js';
 import { http_user_agent } from './util.js';
-import { AnyNotification, CredentialAccount, InstanceInfo, MastodonStreamPayloadTypeSymbol, MastodonStreamWebSocketMessage, Status } from './mastodon-types.js';
+import { AnyNotification, CredentialAccount, InstanceInfo, MastodonStreamWebSocketMessage, MastodonStreamWebSocketMessagePayloadType, Status } from './mastodon-types.js';
 
 const debug = createDebug('mastodon');
 const debugWebSocket = createDebug('mastodon:ws');
@@ -262,11 +262,11 @@ class MastodonStreamWebSocket extends MastodonStream {
 
     handleMessage(event: WebSocket.MessageEvent, data: MastodonStreamWebSocketMessage) {
         if (data.event === 'update') {
-            const status = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            const status = JSON.parse(data.payload) as MastodonStreamWebSocketMessagePayloadType<typeof data>;
             this.handleStatus(status, data.stream, !data.stream.includes('public') && this.streams.includes('public'));
         }
         if (data.event === 'notification') {
-            const notification = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            const notification = JSON.parse(data.payload) as MastodonStreamWebSocketMessagePayloadType<typeof data>;
             this.handleNotification(notification, data.stream);
         }
         if (data.event === 'delete') {
@@ -274,7 +274,7 @@ class MastodonStreamWebSocket extends MastodonStream {
             this.handleStatusDeleted(status_id, data.stream);
         }
         if (data.event === 'status.update') {
-            const status = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            const status = JSON.parse(data.payload) as MastodonStreamWebSocketMessagePayloadType<typeof data>;
             this.handleStatusUpdated(status, data.stream,
                 !data.stream.includes('public') && this.streams.includes('public'));
         }

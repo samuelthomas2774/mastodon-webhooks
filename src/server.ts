@@ -94,7 +94,7 @@ export async function main() {
 
             if (status.visibility === 'private' && status.account.locked && !mentions_webhooks_user) {
                 debug('Skipping followers-only status that doesn\'t mention webhooks bot user from user that requires follow requests', status.id);
-                return;
+                continue;
             }
 
             state.last_status_id = status.id;
