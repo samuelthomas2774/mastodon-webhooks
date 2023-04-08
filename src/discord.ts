@@ -4,7 +4,8 @@ import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatIn
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import Turndown from 'turndown';
-import MastodonApi, { Account, FollowResult, SearchResults } from './mastodon.js';
+import MastodonApi from './mastodon.js';
+import { Account, FollowResult, SearchResults } from './mastodon-types.js';
 import { Webhook } from './webhook.js';
 
 const debug = createDebug('discord');

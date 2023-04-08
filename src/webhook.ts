@@ -2,7 +2,8 @@ import createDebug from 'debug';
 import { WebhookCreateMessageOptions } from 'discord.js';
 import { APIEmbed } from 'discord-api-types/v9';
 import Turndown from 'turndown';
-import MastodonApi, { Status } from './mastodon.js';
+import MastodonApi from './mastodon.js';
+import { Status } from './mastodon-types.js';
 
 const debug = createDebug('webhook');
 const debugDiscord = createDebug('webhook:discord');

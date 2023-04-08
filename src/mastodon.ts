@@ -2,6 +2,7 @@ import createDebug from 'debug';
 import WebSocket, { Event } from 'ws';
 import EventSource from 'eventsource';
 import WebhookManager from './webhooks.js';
+import { AnyNotification, CredentialAccount, InstanceInfo, MastodonStreamPayloadTypeSymbol, MastodonStreamWebSocketMessage, Status } from './mastodon-types.js';
 
 const debug = createDebug('mastodon');
 const debugWebSocket = createDebug('mastodon:ws');
@@ -46,6 +47,15 @@ export default class MastodonApi {
         return response.json();
     }
 
+    async getAccount() {
+        if (!this.token) {
+            throw new Error('verify_credentials requires authentication');
+        }
+
+        const account: CredentialAccount = await this.fetch('/api/v1/accounts/verify_credentials');
+        return account;
+    }
+
     async *getTimelineStatusesSince(last_status_id: string, timeline = this.token ? 'home' : 'public') {
         let statuses: Status[];
 
@@ -64,16 +74,21 @@ export default class MastodonApi {
     }
 
     createEventStream(webhooks: WebhookManager, type = this.token ? 'user' : 'public') {
-        return new MastodonStreamEventSource(this, webhooks, this.server_url, this.token, this.account_host, type);
+        return new MastodonStreamEventSource(this, webhooks,
+            this.server_url, this.token, this.account_host, null, type);
     }
 
-    createSocketStream(webhooks: WebhookManager, type: readonly string[] = ['user', 'public']) {
+    async createSocketStream(webhooks: WebhookManager, type: readonly string[] = ['user', 'public']) {
         if (!this.token) {
             throw new Error('WebSocket streams require authentication');
         }
 
-        // TODO: fetch streaming URL in case it's a separate host
-        return new MastodonStreamWebSocket(this, webhooks, this.server_url, this.token, this.account_host, type);
+        const account = await this.getAccount();
+        const instance: InstanceInfo = await this.fetch('/api/v2/instance');
+
+        return new MastodonStreamWebSocket(this, webhooks,
+            instance.configuration.urls.streaming,
+            this.token, this.account_host, account.id, type);
     }
 }
 
@@ -83,18 +98,25 @@ export abstract class MastodonStream {
     constructor(
         readonly api: MastodonApi,
         readonly webhooks: WebhookManager,
-        readonly server_url: string,
+        server_url: string,
         readonly account_host: string,
+        readonly account_id: string | null,
     ) {}
 
     abstract close(): void;
 
-    async handleStatus(status: Status, event?: MessageEvent, skip_public = false) {
-        debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct, event);
+    async handleStatus(status: Status, event?: MessageEvent | string[], skip_public = false) {
+        const mentions_webhooks_user = !!(this.account_id && status.mentions.find(m => m.id === this.account_id));
 
-        if (skip_public && status.visibility === 'public' && !status.reblog &&
-            (!status.in_reply_to_id || status.in_reply_to_account_id === status.account.id)
-        ) {
+        debug('status %d from %s @%s', status.id, status.account.display_name, status.account.acct,
+            status.visibility, mentions_webhooks_user, event);
+
+        if (status.visibility === 'private' && status.account.locked && !mentions_webhooks_user) {
+            debug('Skipping followers-only status that doesn\'t mention webhooks bot user from user that requires follow requests', status.id);
+            return;
+        }
+
+        if (skip_public && status.visibility === 'public' && this.isStatusDiscoverable(status)) {
             debug('Skipping public status %d from non-public stream, status will also be sent to public stream', status.id);
             return;
         }
@@ -112,11 +134,29 @@ export abstract class MastodonStream {
         }
     }
 
-    handleStatusDeleted(status_id: string, event?: MessageEvent) {
+    /**
+     * Returns true if the status should be sent to the public stream
+     */
+    isStatusDiscoverable(status: Status) {
+        // Statuses are sent to the public (timeline:public) stream in broadcast_to_public_streams
+        // if broadcastable is true, broadcast_to_public_streams also checks if the status is a reply:
+        // https://github.com/mastodon/mastodon/blob/main/app/services/fan_out_on_write_service.rb
+
+        // broadcastable
+        if (status.visibility !== 'public') return false;
+        if (status.reblog) return false;
+
+        // broadcast_to_public_streams
+        if (status.in_reply_to_id && status.in_reply_to_account_id !== status.account.id) return false;
+
+        return true;
+    }
+
+    handleStatusDeleted(status_id: string, event?: MessageEvent | string[]) {
         debug('status deleted', status_id, event);
     }
 
-    handleNotification(notification: AnyNotification, event?: MessageEvent) {
+    handleNotification(notification: AnyNotification, event?: MessageEvent | string[]) {
         if ('account' in notification) debug('notification from %s', notification.account.acct, event);
         else debug('notification', notification, event);
     }
@@ -133,9 +173,10 @@ class MastodonStreamWebSocket extends MastodonStream {
         server_url: string,
         token: string,
         account_host: string,
+        account_id: string | null,
         readonly streams: readonly string[] = ['user', 'public'],
     ) {
-        super(api, webhooks, server_url, account_host);
+        super(api, webhooks, server_url, account_host, account_id);
 
         const socket_url = new URL('/api/v1/streaming', server_url.replace(/^http(s)?:/, 'ws$1:'));
         socket_url.searchParams.append('access_token', token);
@@ -154,7 +195,7 @@ class MastodonStreamWebSocket extends MastodonStream {
         ws.onopen = event => {
             debugWebSocket('WebSocket connected');
 
-            interval = setInterval(() => ws.ping(), 10000)
+            interval = setInterval(() => ws.ping(), 10000);
             this.handleOpen(event);
         };
 
@@ -199,25 +240,19 @@ class MastodonStreamWebSocket extends MastodonStream {
 
     handleMessage(event: WebSocket.MessageEvent, data: MastodonStreamWebSocketMessage) {
         if (data.event === 'update') {
-            const status: Status = JSON.parse(data.payload);
-            this.handleStatus(status, undefined, !data.stream.includes('public') && this.streams.includes('public'));
+            const status = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            this.handleStatus(status, data.stream, !data.stream.includes('public') && this.streams.includes('public'));
         }
         if (data.event === 'notification') {
-            const notification: AnyNotification = JSON.parse(data.payload);
-            this.handleNotification(notification);
+            const notification = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            this.handleNotification(notification, data.stream);
         }
         if (data.event === 'delete') {
             const status_id: string = data.payload;
-            this.handleStatusDeleted(status_id);
+            this.handleStatusDeleted(status_id, data.stream);
+        }
         }
     }
-}
-
-interface MastodonStreamWebSocketMessage {
-    stream: string[];
-    event: 'update' | 'notification' | 'delete';
-    // JSON-encoded data
-    payload: string;
 }
 
 class MastodonStreamEventSource extends MastodonStream {
@@ -229,9 +264,10 @@ class MastodonStreamEventSource extends MastodonStream {
         server_url: string,
         token: string | undefined,
         account_host: string,
+        account_id: string | null,
         type = 'user',
     ) {
-        super(api, webhooks, server_url, account_host);
+        super(api, webhooks, server_url, account_host, account_id);
 
         const stream_url = new URL('/api/v1/streaming/' + type, server_url);
         if (token) stream_url.searchParams.append('access_token', token);
@@ -283,143 +319,4 @@ class MastodonStreamEventSource extends MastodonStream {
         const notification: AnyNotification = JSON.parse(event.data);
         this.handleNotification(notification, event);
     }
-}
-
-export interface Account {
-    id: string;
-    username: string;
-    acct: string;
-    display_name: string;
-    locked: boolean;
-    bot: boolean;
-    discoverable: boolean;
-    group: boolean;
-    created_at: string;
-    note: string;
-    url: string;
-    avatar: string;
-    avatar_static: string;
-    header: string;
-    header_static: string;
-    followers_count: number;
-    following_count: number;
-    statuses_count: number;
-    last_status_at: string;
-    noindex: boolean;
-    emojis: unknown[];
-    fields: {
-        name: string;
-        /** HTML */
-        value: string;
-        verified_at: string | null;
-    }[];
-}
-
-export interface FollowResult {
-    id: string;
-    following: boolean;
-    showing_reblogs: boolean;
-    notifying: boolean;
-    followed_by: boolean;
-    blocking: boolean;
-    blocked_by: boolean;
-    muting: boolean;
-    muting_notifications: boolean;
-    requested: boolean;
-    domain_blocking: boolean;
-    endorsed: boolean;
-}
-
-export interface MediaAttachmentImageMeta {
-    width: number;
-    height: number;
-    size: string;
-    aspect: number;
-}
-export interface MediaAttachmentImage {
-    id: string;
-    type: 'image';
-    url: string;
-    preview_url: string;
-    remote_url: string | null;
-    preview_remote_url: string | null;
-    text_url: string | null;
-    meta: {
-        original: MediaAttachmentImageMeta;
-        small: MediaAttachmentImageMeta;
-    };
-    description: string;
-    blurhash: string;
-}
-
-export interface Status {
-    id: string;
-    created_at: string;
-    in_reply_to_id: string | null;
-    in_reply_to_account_id: string | null;
-    sensitive: boolean;
-    spoiler_text: string;
-    /**
-     * - public: Visible to everyone, shown in public timelines.
-     * - unlisted: Visible to public, but not included in public timelines.
-     * - private: Visible to followers only, and to any mentioned users.
-     * - direct: Visible only to mentioned users.
-     */
-    visibility: 'public' | 'unlisted' | 'private' | 'direct';
-    language: string | null;
-    /** Identifier */
-    uri: string;
-    /** HTML URL */
-    url: string | null;
-    replies_count: number;
-    reblogs_count: number;
-    favourites_count: number;
-    edited_at: string | null;
-    /** HTML content */
-    content: string;
-    reblog: Status | null;
-    application: {
-        name: string;
-        website: string | null;
-    };
-    account: Account;
-    media_attachments: MediaAttachmentImage[];
-    mentions: {
-        id: string;
-        username: string;
-        url: string;
-        acct: string;
-    }[];
-    tags: unknown[];
-    emojis: unknown[];
-    card: unknown | null;
-    poll: unknown | null;
-    favourited: boolean;
-    reblogged: boolean;
-    muted: boolean;
-    bookmarked: boolean;
-    filtered: unknown[];
-}
-
-export interface Notification {
-    id: string;
-    type: string;
-    created_at: string;
-}
-
-export interface MentionNotification extends Notification {
-    // id: string;
-    type: 'mention',
-    // created_at: string;
-    account: Account;
-    status: Status;
-}
-
-export type AnyNotification = Notification |
-    MentionNotification;
-
-export interface SearchResults {
-    accounts: Account[];
-    statuses: Status[];
-    hashtags: unknown[];
 }

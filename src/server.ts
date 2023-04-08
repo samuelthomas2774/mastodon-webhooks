@@ -80,14 +80,22 @@ export async function main() {
     if (state?.last_status_id) {
         debug('Checking for missed statuses since', state.last_status_id);
 
+        const account = mastodon.authenticated ? await mastodon.getAccount() : null;
         const timeline_name = process.env.MASTODON_TIMELINE || (mastodon.authenticated ? 'home' : 'public');
 
         for await (const status of mastodon.getTimelineStatusesSince(state.last_status_id, timeline_name)) {
+            const mentions_webhooks_user = !!(account && status.mentions.find(m => m.id === account.id));
+
             debug('Processing missed status %d from %s @%s',
-                status.id, status.account.display_name, status.account.acct);
+                status.id, status.account.display_name, status.account.acct,
+                status.visibility, mentions_webhooks_user);
+
+            if (status.visibility === 'private' && status.account.locked && !mentions_webhooks_user) {
+                debug('Skipping followers-only status that doesn\'t mention webhooks bot user from user that requires follow requests', status.id);
+                return;
+            }
 
             state.last_status_id = status.id;
-
             let did_find_webhook = false;
 
             for await (const webhook of webhooks.getWebhooksForStatus(status, mastodon.account_host)) {
@@ -102,7 +110,7 @@ export async function main() {
     }
 
     const stream = mastodon.authenticated ?
-        mastodon.createSocketStream(webhooks, ['user', 'public']) :
+        await mastodon.createSocketStream(webhooks, ['user', 'public']) :
         mastodon.createEventStream(webhooks, 'public');
 
     debug('acct host', mastodon.account_host);

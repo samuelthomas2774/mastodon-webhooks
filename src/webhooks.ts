@@ -1,7 +1,8 @@
 import createDebug from 'debug';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
-import MastodonApi, { Status } from './mastodon.js';
+import { Status } from './mastodon-types.js';
+import MastodonApi from './mastodon.js';
 import { executeStatusWebhook, Webhook, WebhookType } from './webhook.js';
 
 const debug = createDebug('webhooks');
