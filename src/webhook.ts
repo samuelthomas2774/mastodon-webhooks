@@ -4,6 +4,7 @@ import { APIEmbed } from 'discord-api-types/v9';
 import Turndown from 'turndown';
 import MastodonApi from './mastodon.js';
 import { Status } from './mastodon-types.js';
+import { http_user_agent } from './util.js';
 
 const debug = createDebug('webhook');
 const debugDiscord = createDebug('webhook:discord');
@@ -50,6 +51,7 @@ class StatusWebhookExecutor {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'User-Agent': http_user_agent,
             },
             body: JSON.stringify(payload),
         });

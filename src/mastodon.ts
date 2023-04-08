@@ -2,6 +2,7 @@ import createDebug from 'debug';
 import WebSocket, { Event } from 'ws';
 import EventSource from 'eventsource';
 import WebhookManager from './webhooks.js';
+import { http_user_agent } from './util.js';
 import { AnyNotification, CredentialAccount, InstanceInfo, MastodonStreamPayloadTypeSymbol, MastodonStreamWebSocketMessage, Status } from './mastodon-types.js';
 
 const debug = createDebug('mastodon');
@@ -20,7 +21,9 @@ export default class MastodonApi {
     }
 
     async fetch(url: URL | string, method = 'GET', body?: string | object) {
-        const headers = new Headers();
+        const headers = new Headers({
+            'User-Agent': http_user_agent,
+        });
 
         if (this.token) {
             headers.set('Authorization', 'Bearer ' + this.token);

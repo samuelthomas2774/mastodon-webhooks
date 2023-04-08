@@ -9,12 +9,14 @@ import { parse } from 'yaml';
 import MastodonApi from './mastodon.js';
 import WebhookManager, { ConfigData } from './webhooks.js';
 import DiscordBot from './discord.js';
+import { data_path, git, http_user_agent, version } from './util.js';
 
 const debug = createDebug('server');
 
-const data_path = path.join(fileURLToPath(import.meta.url), '..', '..', 'data');
-
 export async function main() {
+    debug('version', version, git);
+    debug('useragent', http_user_agent);
+
     debug('path', data_path);
 
     await fs.mkdir(data_path, {recursive: true});
