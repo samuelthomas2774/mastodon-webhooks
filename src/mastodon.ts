@@ -160,6 +160,25 @@ export abstract class MastodonStream {
         if ('account' in notification) debug('notification from %s', notification.account.acct, event);
         else debug('notification', notification, event);
     }
+
+    handleStatusUpdated(status: Status, event?: MessageEvent | string[], skip_public = false) {
+        const mentions_webhooks_user = !!(this.account_id && status.mentions.find(m => m.id === this.account_id));
+
+        debug('status %d from %s @%s updated', status.id, status.account.display_name, status.account.acct,
+            status.visibility, mentions_webhooks_user, event);
+
+        if (status.visibility === 'private' && status.account.locked && !mentions_webhooks_user) {
+            debug('Skipping followers-only status that doesn\'t mention webhooks bot user from user that requires follow requests', status.id);
+            return;
+        }
+
+        if (skip_public && status.visibility === 'public' && this.isStatusDiscoverable(status)) {
+            debug('Skipping public status %d from non-public stream, status will also be sent to public stream', status.id);
+            return;
+        }
+
+        //
+    }
 }
 
 class MastodonStreamWebSocket extends MastodonStream {
@@ -251,6 +270,10 @@ class MastodonStreamWebSocket extends MastodonStream {
             const status_id: string = data.payload;
             this.handleStatusDeleted(status_id, data.stream);
         }
+        if (data.event === 'status.update') {
+            const status = JSON.parse(data.payload) as typeof data[MastodonStreamPayloadTypeSymbol];
+            this.handleStatusUpdated(status, data.stream,
+                !data.stream.includes('public') && this.streams.includes('public'));
         }
     }
 }
@@ -285,8 +308,9 @@ class MastodonStreamEventSource extends MastodonStream {
         this.events.onmessage = event => this.handleMessage(event);
 
         this.events.addEventListener('update', event => this.handleStatusMessage(event));
-        this.events.addEventListener('notification', event => this.handleNotificationMessage(event));
         this.events.addEventListener('delete', event => this.handleStatusDeletedMessage(event));
+        this.events.addEventListener('notification', event => this.handleNotificationMessage(event));
+        this.events.addEventListener('status.update', event => this.handleStatusUpdateMessage(event));
     }
 
     close() {
@@ -318,5 +342,10 @@ class MastodonStreamEventSource extends MastodonStream {
     handleNotificationMessage(event: MessageEvent) {
         const notification: AnyNotification = JSON.parse(event.data);
         this.handleNotification(notification, event);
+    }
+
+    handleStatusUpdateMessage(event: MessageEvent) {
+        const status: Status = JSON.parse(event.data);
+        this.handleStatusUpdated(status, event);
     }
 }
