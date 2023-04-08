@@ -1,14 +1,20 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import createDebug from 'debug';
 import { APIEmbed } from 'discord-api-types/v9';
 import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, ForumChannel, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, PrivateThreadChannel, PublicThreadChannel, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import Turndown from 'turndown';
+import getImageColours from 'get-image-colors';
 import MastodonApi from './mastodon.js';
 import { Account, FollowResult, SearchResults } from './mastodon-types.js';
 import { Webhook } from './webhook.js';
+import { data_path, http_user_agent } from './util.js';
 
 const debug = createDebug('discord');
+const debugAvatarColours = createDebug('discord:colours');
 
 const turndown = new Turndown();
 
@@ -169,25 +175,19 @@ export default class DiscordBot {
 
         const accounts = await this.findAccounts(id);
 
-        if (accounts.length > 1) {
-            await interaction.editReply('Multiple results found.');
-        }
-
-        for (const account of accounts.slice(0, 1)) {
-            const embed = this.createAccountEmbed(account, true);
-
-            const message = {
-                content: account.url,
-                embeds: [embed],
-            };
-
-            if (accounts.length === 1) await interaction.editReply(message);
-            else await interaction.channel?.send(message);
-        }
-
         if (!accounts.length) {
             await interaction.editReply('No results found.');
+            return;
         }
+
+        const embeds = await Promise.all(accounts
+            .slice(0, 1)
+            .map(a => this.createAccountEmbed(a, true)));
+
+        await interaction.editReply({
+            content: accounts.length === 1 ? accounts[0].url : 'Multiple results found.',
+            embeds,
+        });
     }
 
     async handleFollowingCommand(interaction: ChatInputCommandInteraction) {
@@ -280,7 +280,7 @@ export default class DiscordBot {
             '@' + acct !== id &&
             account.url !== id
         ) {
-            const embed = this.createAccountEmbed(account);
+            const embed = await this.createAccountEmbed(account);
 
             // Check if a webhook already exists
             const {filter_accts} = await this.getWebhooksForChannelActor(interaction.guild, channel, thread, acct);
@@ -368,22 +368,22 @@ export default class DiscordBot {
 
         debug('Follow result', follow_result);
 
-        const embed = this.createAccountEmbed(account);
+        const content =
+            // Not authenticated, will use public timeline
+            !follow_result ? 'Following ' + account.url :
+            // Actor requires follower approval, sent request
+            'result' in follow_result && follow_result.result.requested ? 'A follow request has been sent to ' + account.url + '. Statuses may not be delivered until the request is accepted.' :
+            // Error sending follow reqeust
+            'error' in follow_result ? 'The Mastodon bot was unable to send a follow request to ' + account.url + '. The webhook has been created, but statuses may not be delivered.' :
+            // Following
+            'Following ' + account.url;
 
-        const message = {
-            content:
-                // Not authenticated, will use public timeline
-                !follow_result ? 'Following ' + account.url :
-                // Actor requires follower approval, sent request
-                'result' in follow_result && follow_result.result.requested ? 'A follow request has been sent to ' + account.url + '. Statuses may not be delivered until the request is accepted.' :
-                // Error sending follow reqeust
-                'error' in follow_result ? 'The Mastodon bot was unable to send a follow request to ' + account.url + '. The webhook has been created, but statuses may not be delivered.' :
-                // Following
-                'Following ' + account.url,
+        const embed = await this.createAccountEmbed(account);
+
+        await interaction.editReply({
+            content,
             embeds: [embed],
-        };
-
-        await interaction.editReply(message);
+        });
     }
 
     async getWebhooksForChannelActor(
@@ -442,7 +442,7 @@ export default class DiscordBot {
             '@' + acct !== id &&
             account.url !== id
         ) {
-            const embed = this.createAccountEmbed(account);
+            const embed = await this.createAccountEmbed(account);
 
             // Check if a webhook exists
             const {filter_accts} = await this.getWebhooksForChannelActor(interaction.guild, channel, thread, acct);
@@ -527,7 +527,7 @@ export default class DiscordBot {
             debug('Deleted webhook', webhook, result);
         }
 
-        const embed = this.createAccountEmbed(account);
+        const embed = await this.createAccountEmbed(account);
 
         const message = {
             content: 'Unfollowed ' + account.url,
@@ -609,13 +609,15 @@ export default class DiscordBot {
         return result.lastID;
     }
 
-    createAccountEmbed(account: Account, include_fields = false) {
+    async createAccountEmbed(account: Account, include_fields = false) {
         const acct = account.acct.includes('@') ?
             account.acct : account.acct + '@' + this.mastodon.account_host;
 
         const embed: APIEmbed = {
             title: account.display_name,
             description: turndown.turndown(account.note),
+            url: account.url,
+            color: await getAccountColour(account, this.mastodon.server_url) ?? undefined,
             thumbnail: {
                 url: account.avatar,
             },
@@ -639,4 +641,81 @@ export default class DiscordBot {
 
         return embed;
     }
+}
+
+const account_colour_promise = new Map</** server URL/account ID/avatar URL */ string, Promise<number | null>>();
+
+export function getAccountColour(account: Account, server_url: string) {
+    const key = server_url + ':' + account.id + ':' + account.avatar;
+
+    if (account_colour_promise.has(key)) return account_colour_promise.get(key)!;
+
+    const promise = getAccountColours(account, server_url)
+        .then(data => data?.colours[0] ?? null)
+        .catch(err => (debugAvatarColours('Error getting account colours', account.id, account.display_name, err), null))
+        .finally(() => account_colour_promise.delete(key));
+
+    account_colour_promise.set(key, promise);
+
+    return promise;
+}
+
+interface AccountColoursCache {
+    server_url: string;
+    id: string;
+    url: string;
+    key: string;
+    colours: number[];
+    created_at: string;
+}
+
+async function getAccountColours(account: Account, server_url: string) {
+    const server_key = createHash('sha1').update(server_url).digest('hex');
+    const key = createHash('sha1').update(account.avatar).digest('hex');
+
+    try {
+        const cache: AccountColoursCache = JSON.parse(await fs.readFile(
+            path.join(data_path, 'avatar-colours-cache', server_key, account.id, key + '.json'), 'utf-8'));
+
+        return cache;
+    } catch (err) {
+        if (!err || typeof err !== 'object' || !('code' in err) || err.code !== 'ENOENT') throw err;
+    }
+
+    const response = await fetch(account.avatar, {
+        headers: {
+            'User-Agent': http_user_agent,
+        },
+    });
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) {
+        debugAvatarColours('Server returned status %d %s when fetching avatar', response.status, response.statusText);
+        return null;
+    }
+
+    const type = response.headers.get('Content-Type') ?? 'image/png';
+    const data = await response.arrayBuffer();
+    const buffer = Buffer.from(new Uint8Array(data));
+
+    const colours = await getImageColours(buffer, {type});
+
+    debugAvatarColours('account colours', colours);
+
+    const cache: AccountColoursCache = {
+        server_url,
+        id: account.id,
+        url: account.avatar,
+        key,
+        colours: colours.map(c => c.num()),
+        created_at: new Date().toISOString(),
+    };
+
+    await fs.mkdir(path.join(data_path, 'avatar-colours-cache', server_key, account.id), {recursive: true});
+    await fs.writeFile(
+        path.join(data_path, 'avatar-colours-cache', server_key, account.id, key + '.json'),
+        JSON.stringify(cache), 'utf-8');
+
+    return cache;
 }

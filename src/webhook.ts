@@ -5,6 +5,7 @@ import Turndown from 'turndown';
 import MastodonApi from './mastodon.js';
 import { Status } from './mastodon-types.js';
 import { http_user_agent } from './util.js';
+import { getAccountColour } from './discord.js';
 
 const debug = createDebug('webhook');
 const debugDiscord = createDebug('webhook:discord');
@@ -40,12 +41,12 @@ class StatusWebhookExecutor {
         throw new Error('Invalid webhook type');
     }
 
-    formatPayload(status: Status): unknown {
+    formatPayload(status: Status): unknown | Promise<unknown> {
         return status;
     }
 
     async send(webhook: Webhook, status: Status) {
-        const payload = this.formatPayload(status);
+        const payload = await this.formatPayload(status);
 
         const response = await fetch(webhook.url, {
             method: 'POST',
@@ -73,13 +74,15 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
         super();
     }
 
-    formatPayload(_status: Status) {
+    async formatPayload(_status: Status) {
         const embeds: APIEmbed[] = [];
 
         let content = '';
         let status: Status | null = _status;
 
         while (status) {
+            const colour = await getAccountColour(status.account, this.mastodon.server_url);
+
             const markdown = status.spoiler_text ?
                 turndown.turndown(status.spoiler_text) + '\n\n' +
                     turndown.turndown(status.content).replace(/^(.+)$/gm, '||$1||') :
@@ -107,6 +110,7 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
                 },
                 description: markdown,
                 url: status.uri,
+                color: colour ?? undefined,
                 footer: footer_text ? {
                     text: footer_text,
                 } : undefined,
