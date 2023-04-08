@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import createDebug from 'debug';
 import { APIEmbed } from 'discord-api-types/v9';
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, ForumChannel, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, PrivateThreadChannel, PublicThreadChannel, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, Client, Events, ForumChannel, GatewayIntentBits, Guild, Interaction, PermissionFlagsBits, PrivateThreadChannel, PublicThreadChannel, REST, Routes, SlashCommandBuilder, TextBasedChannel } from 'discord.js';
 import sql from 'sql-template-strings';
 import { Database } from 'sqlite';
 import Turndown from 'turndown';
@@ -11,7 +11,7 @@ import getImageColours from 'get-image-colors';
 import MastodonApi from './mastodon.js';
 import { Account, FollowResult, SearchResults } from './mastodon-types.js';
 import { Webhook } from './webhook.js';
-import { data_path, http_user_agent } from './util.js';
+import { data_path, git, http_user_agent } from './util.js';
 
 const debug = createDebug('discord');
 const debugAvatarColours = createDebug('discord:colours');
@@ -68,23 +68,23 @@ export default class DiscordBot {
         this.client.login(token);
         this.api = this.client.rest;
 
-        this.client.on('error', err => {
+        this.client.on(Events.Error, err => {
             debug('client error', err);
         });
-        this.client.on('debug', message => {
+        this.client.on(Events.Debug, message => {
             debug('client debug', message);
         });
 
-        this.client.on('ready', client => this.handleClientReady(client));
-        this.client.on('interactionCreate', interaction => this.handleInteraction(interaction));
+        this.client.on(Events.ClientReady, client => this.handleClientReady(client));
+        this.client.on(Events.InteractionCreate, interaction => this.handleInteraction(interaction));
 
-        this.client.on('guildCreate', guild => {
+        this.client.on(Events.GuildCreate, guild => {
             debug('Joined guild %d %s', guild.id, guild.name);
         });
-        this.client.on('guildDelete', guild => {
+        this.client.on(Events.GuildDelete, guild => {
             debug('Left guild %d %s', guild.id, guild.name);
         });
-        this.client.on('webhookUpdate', channel => {
+        this.client.on(Events.WebhooksUpdate, channel => {
             debug('Received webhooks updated for channel %d %s in guild %d %s',
                 channel.id, channel.name, channel.guild.id, channel.guild.name);
         });
@@ -158,6 +158,9 @@ export default class DiscordBot {
             const embed: APIEmbed = {
                 description: error instanceof Error ? error.name + ': ' + error.message : 'Unknown error',
                 color: 0xff0000,
+                footer: {
+                    text: git?.revision.substr(0, 8) ?? 'unknown revision',
+                },
             };
 
             interaction.replied || interaction.deferred ?
@@ -616,7 +619,12 @@ export default class DiscordBot {
         const embed: APIEmbed = {
             title: account.display_name,
             description: turndown.turndown(account.note),
-            url: account.url,
+            url: account.url + '#' + new URLSearchParams({
+                source: 'https://gitlab.fancy.org.uk/samuel/mastodon-webhooks discord bot',
+                revision: git?.revision ?? 'unknown',
+                server_url: this.mastodon.server_url,
+                account_id: account.id,
+            }).toString(),
             color: await getAccountColour(account, this.mastodon.server_url) ?? undefined,
             thumbnail: {
                 url: account.avatar,

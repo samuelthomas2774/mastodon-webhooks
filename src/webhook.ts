@@ -4,7 +4,7 @@ import { APIEmbed } from 'discord-api-types/v9';
 import Turndown from 'turndown';
 import MastodonApi from './mastodon.js';
 import { Status } from './mastodon-types.js';
-import { http_user_agent } from './util.js';
+import { git, http_user_agent } from './util.js';
 import { getAccountColour } from './discord.js';
 
 const debug = createDebug('webhook');
@@ -106,7 +106,12 @@ class StatusWebhookExecutorDiscord extends StatusWebhookExecutor {
                 author: {
                     name: status.account.display_name,
                     icon_url: status.account.avatar,
-                    url: status.account.url,
+                    url: status.account.url + '#' + new URLSearchParams({
+                        source: 'https://gitlab.fancy.org.uk/samuel/mastodon-webhooks discord',
+                        revision: git?.revision ?? 'unknown',
+                        server_url: this.mastodon.server_url,
+                        status_id: status.id,
+                    }).toString(),
                 },
                 description: markdown,
                 url: status.uri,
